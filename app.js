@@ -27,6 +27,24 @@ const ENDPOINT_CONFIGS = [
   },
 ];
 
+// Load root level endpoints separately
+const rootEndpointPath = './endpoints/';
+const rootItems = fs.readdirSync(rootEndpointPath);
+rootItems.forEach((item) => {
+  const itemPath = `${rootEndpointPath}${item}`;
+  const stat = fs.statSync(itemPath);
+
+  // Only process .js files, skip directories and other files
+  if (stat.isFile() && item.endsWith('.js') && item !== 'index.js') {
+    const handler = require(itemPath);
+
+    // Only add handlers that have proper method and path
+    if (handler && handler.method && handler.path) {
+      server.addHandler(handler);
+    }
+  }
+});
+
 function logEndpointMetaData(endpointConfigs) {
   const endpointData = [];
   const storageDirName = './endpoint-data';
@@ -69,16 +87,22 @@ if (canLogEndpointInformation) {
 }
 
 function setupEndpointHandlers(basePath, options = {}) {
-  const dirs = fs.readdirSync(basePath);
+  const items = fs.readdirSync(basePath);
 
-  dirs.forEach((file) => {
-    const handler = require(`${basePath}${file}`);
+  items.forEach((item) => {
+    const itemPath = `${basePath}${item}`;
+    const stat = fs.statSync(itemPath);
 
-    if (options.pathPrefix) {
-      handler.path = `${options.pathPrefix}${handler.path}`;
+    // Only process .js files, skip directories and other files
+    if (stat.isFile() && item.endsWith('.js')) {
+      const handler = require(itemPath);
+
+      if (options.pathPrefix) {
+        handler.path = `${options.pathPrefix}${handler.path}`;
+      }
+
+      server.addHandler(handler);
     }
-
-    server.addHandler(handler);
   });
 }
 
