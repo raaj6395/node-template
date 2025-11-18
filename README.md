@@ -1,8 +1,154 @@
-# Assessment Codebase Guide
 
-This guide will help you understand the codebase architecture and set up your services, endpoints, and middleware correctly. This is NOT a solution to the assessment - it's a reference guide to help you implement your own solution following the codebase conventions.
+## Implemented Payment Instruction Service
 
-> 📖 **For comprehensive architecture documentation, see [documentation.md](./documentation.md)**
+### Endpoint Overview
+
+- **Method**: `POST`
+- **Path**: `/payment-instructions`
+- **Deployed Base URL**: `https://my-assessment-app.onrender.com`
+- **Full Deployed Endpoint URL**: `https://my-assessment-app.onrender.com/payment-instructions`
+
+This endpoint accepts a natural-language style payment instruction string together with a list of accounts, and either:
+
+- Executes the transaction immediately (debiting and crediting account balances), or
+- Schedules it for future execution, or
+- Returns a structured validation/parsing error.
+
+### Request Payload
+
+```json
+{
+  "accounts": [
+    {
+      "id": "ACC1",
+      "balance": 100000,
+      "currency": "NGN"
+    },
+    {
+      "id": "ACC2",
+      "balance": 50000,
+      "currency": "NGN"
+    }
+  ],
+  "instruction": "DEBIT 1000 NGN FROM ACCOUNT ACC1 FOR CREDIT TO ACCOUNT ACC2 ON 2025-11-20"
+}
+```
+
+#### Instruction Format
+
+Supported patterns (case-insensitive, extra spaces tolerated):
+
+- **DEBIT** pattern:
+  - `DEBIT [amount] [currency] FROM ACCOUNT [debit_account_id] FOR CREDIT TO ACCOUNT [credit_account_id] [ON [YYYY-MM-DD]]`
+
+- **CREDIT** pattern:
+  - `CREDIT [amount] [currency] TO ACCOUNT [credit_account_id] FOR DEBIT FROM ACCOUNT [debit_account_id] [ON [YYYY-MM-DD]]`
+
+Examples:
+
+- `DEBIT 100 NGN FROM ACCOUNT ACC1 FOR CREDIT TO ACCOUNT ACC2`
+- `CREDIT 50 USD TO ACCOUNT john@example.com FOR DEBIT FROM ACCOUNT main-wallet ON 2025-11-20`
+
+### Validation & Business Rules
+
+The payment instruction service (`services/payment-instruction.js`) applies the following core validations:
+
+- **Amount**
+  - Must be a positive integer (no decimals).
+  - Uses `STATUS_CODES.AM01` when invalid.
+
+- **Currency**
+  - Must be one of `NGN`, `USD`, `GBP`, `GHS` (case-insensitive).
+  - Uses `STATUS_CODES.CU02` for unsupported currency.
+
+- **Accounts**
+  - `debit_account` and `credit_account` must be different.
+  - Both account IDs must exist in the `accounts` array.
+  - Account IDs can contain letters, numbers, hyphens (`-`), periods (`.`), and `@`.
+  - Uses:
+    - `STATUS_CODES.AC02` when debit and credit accounts are the same.
+    - `STATUS_CODES.AC03` when an account is not found.
+    - `STATUS_CODES.AC04` for invalid account ID format.
+
+- **Account Currency & Balance**
+  - Debit and credit accounts must share the same currency as the instruction.
+  - Debit account must have sufficient funds.
+  - Uses:
+    - `STATUS_CODES.CU01` for currency mismatch.
+    - `STATUS_CODES.AC01` for insufficient funds.
+
+- **Execution Date (optional)**
+  - If `ON [date]` is provided, date must be in `YYYY-MM-DD` format.
+  - Uses `STATUS_CODES.DT01` for invalid date.
+  - If the date is **today or in the past**, the transaction is executed immediately.
+  - If the date is **in the future**, the transaction is marked as `pending` (no balance changes).
+
+- **Syntax & Keywords**
+  - Uses simple string manipulation (no regex) to locate required keywords and their order.
+  - Uses:
+    - `STATUS_CODES.SY01` for missing required keywords.
+    - `STATUS_CODES.SY02` for invalid keyword order.
+    - `STATUS_CODES.SY03` for malformed or unparseable instructions.
+
+### Response Format
+
+The endpoint always returns a structured object with the following fields:
+
+```json
+{
+  "type": "DEBIT | CREDIT | null",
+  "amount": 1000,
+  "currency": "NGN",
+  "debit_account": "ACC1",
+  "credit_account": "ACC2",
+  "execute_by": "2025-11-20" | null,
+  "status": "successful" | "pending" | "failed",
+  "status_reason": "...",
+  "status_code": "AP00" | "AP02" | "AM01" | "CU01" | "CU02" | "AC01" | "AC02" | "AC03" | "AC04" | "DT01" | "SY01" | "SY02" | "SY03",
+  "accounts": [
+    {
+      "id": "ACC1",
+      "balance": 99000,
+      "balance_before": 100000,
+      "currency": "NGN"
+    },
+    {
+      "id": "ACC2",
+      "balance": 51000,
+      "balance_before": 50000,
+      "currency": "NGN"
+    }
+  ]
+}
+```
+
+### HTTP Status Codes for the Endpoint
+
+The `/payment-instructions` endpoint maps business outcomes to HTTP status codes as follows:
+
+- **HTTP 200 OK**
+  - `status: "successful"` → transaction executed immediately (`status_code: "AP00"`).
+  - `status: "pending"` → transaction scheduled for future execution (`status_code: "AP02"`).
+
+- **HTTP 400 Bad Request**
+  - `status: "failed"` due to parsing, validation, or business rule violations (amount, currency, accounts, date, syntax).
+
+- **HTTP 500 Internal Server Error**
+  - Unexpected server-side errors. Returns a generic failure payload with `status_code: "SY03"` and no accounts.
+
+### Example Deployed Call
+
+```bash
+curl -X POST "https://my-assessment-app.onrender.com/payment-instructions" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accounts": [
+      { "id": "ACC1", "balance": 100000, "currency": "NGN" },
+      { "id": "ACC2", "balance": 50000, "currency": "NGN" }
+    ],
+    "instruction": "DEBIT 1000 NGN FROM ACCOUNT ACC1 FOR CREDIT TO ACCOUNT ACC2 ON 2025-11-20"
+  }'
+```
 
 ---
 
